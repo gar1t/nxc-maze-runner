@@ -1,0 +1,157 @@
+// -*-c-*-
+
+#define FORWARD_A_POWER 75
+#define FORWARD_C_POWER 67
+#define BACKWARD_A_POWER 75
+#define BACKWARD_C_POWER 67
+#define BACKUP_TIME 500
+#define TURN_A_POWER 75
+#define TURN_C_POWER 67
+#define TURN_90_TIME 1200
+#define FIRST_SEEK_TIME 250
+#define SECOND_SEEK_TIME 750
+#define LINE_THRESHOLD 1
+#define ROTATE_LEFT 1
+#define ROTATE_RIGHT -1
+#define FORAGE_THRESHOLD 950
+#define FORAGE_TIME 500
+
+int last_seek_dir;
+mutex move_mutex;
+
+void InitState() {
+  last_seek_dir = Random() > 0 ? ROTATE_LEFT : ROTATE_RIGHT;
+}
+
+void InitSensors() {
+  SetSensorTouch(IN_1);
+  SetSensorType(IN_4, SENSOR_TYPE_LIGHT_ACTIVE);
+  SetSensorColorFull(IN_4);
+  ResetSensor(IN_4);
+}
+
+void MoveForward() {
+  OnFwd(OUT_A, FORWARD_A_POWER);
+  OnFwd(OUT_C, FORWARD_C_POWER);
+}
+
+void Brake() {
+  Off(OUT_AC);
+}
+
+bool Online() {
+  return SENSOR_4 <= LINE_THRESHOLD;
+}
+
+void Rotate(int dir) {
+  if (dir == ROTATE_LEFT) {
+    OnFwd(OUT_A, TURN_A_POWER);
+    OnRev(OUT_C, TURN_C_POWER);
+  } else {
+    OnFwd(OUT_C, TURN_C_POWER);
+    OnRev(OUT_A, TURN_A_POWER);
+  }
+}
+
+unsigned long TimeoutAfter(unsigned long millis) {
+  return CurrentTick() + millis;
+}
+
+bool Timeout(unsigned long timeout_at) {
+  return CurrentTick() >= timeout_at;
+}
+
+void FindLine() {
+  unsigned long stop_at = TimeoutAfter(FIRST_SEEK_TIME);
+  Rotate(last_seek_dir);
+  until (Online() || Timeout(stop_at));
+  if (!Online()) {
+    stop_at = TimeoutAfter(SECOND_SEEK_TIME);
+    last_seek_dir = -last_seek_dir;
+    Rotate(last_seek_dir);
+    until (Online() || Timeout(stop_at));
+    if (!Online()) {
+      last_seek_dir = -last_seek_dir;
+      Rotate(last_seek_dir);
+      until (Online());
+    }
+  }
+}
+
+void RotateRandom() {
+  if (Random() > 0) {
+    Rotate(ROTATE_LEFT);
+  } else {
+    Rotate(ROTATE_RIGHT);
+  }
+}
+
+bool RandomForage() {
+  return Random(1000) > FORAGE_THRESHOLD;
+}
+
+void MaybeForage() {
+  if (RandomForage()) {
+    PlayTone(500, 500);
+    RotateRandom();
+    Wait(FORAGE_TIME);
+  }
+}
+
+task FollowLine() {
+  while (true) {
+    Acquire(move_mutex);
+    MoveForward();
+    while (Online()) {
+      Wait(100);
+      MaybeForage();
+      Release(move_mutex);
+      Acquire(move_mutex);
+    }
+    FindLine();
+    Release(move_mutex);
+  }
+}
+
+void Backup() {
+  OnRev(OUT_A, FORWARD_A_POWER);
+  OnRev(OUT_C, FORWARD_C_POWER);
+  Wait(BACKUP_TIME);
+}
+
+bool Collision() {
+  return SENSOR_1 == 1;
+}
+
+void Random90() {
+  Rotate(Random() > 0 ? ROTATE_LEFT : ROTATE_RIGHT);
+  Wait(TURN_90_TIME);
+}
+
+task CheckForCollisions() {
+  while (true) {
+    if (Collision()) {
+      Acquire(move_mutex);
+      Backup();
+      Random90();
+      Release(move_mutex);
+    }
+  }
+}
+
+task PrintInfo() {
+  while (true) {
+    TextOut(0, 0, NumToStr(SENSOR_4));
+    Yield();
+  }
+}
+
+void Shutdown() {
+  Off(OUT_AC);
+}
+
+task main() {
+  Precedes(PrintInfo, FollowLine, CheckForCollisions);
+  InitState();
+  InitSensors();
+}
