@@ -14,7 +14,7 @@
 #define ROTATE_LEFT 1
 #define ROTATE_RIGHT -1
 #define FORAGE_THRESHOLD 950
-#define FORAGE_TIME 500
+#define FORAGE_TIME 1200
 
 int last_seek_dir;
 mutex move_mutex;
